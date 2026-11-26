@@ -1,0 +1,74 @@
+name: video stills
+
+# Renders each of the four graphics to stills so a frame can be looked at
+# without a Mac in the room. The raea CLI has no aarch64 build, so this is the
+# only way to see the compositions from a phone or a Linux box.
+#
+# Manual by default. It also runs when `video/` changes, and it uploads the
+# frames as an artifact rather than committing them.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'video/**'
+
+jobs:
+  stills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Software Vulkan: there is no GPU on a runner, and raea renders on the
+      # CPU through llvmpipe. These are the packages that make that work.
+      - name: Graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools \
+            libasound2t64 libfontconfig1 fonts-noto-cjk
+
+      - name: Install raea
+        run: |
+          curl -fsSL https://raea.io/install | sh
+          if ! command -v raea >/dev/null 2>&1; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+          command -v raea
+
+      # One render per composition, because `--at` only ever looks at the first
+      # composition in the file. Frame numbers are the beats worth checking:
+      # title 0 (before anything appears), 45 and 89 (settled); blast 0, 60
+      # (chips arriving), 140 (strike-through drawn), 239 (caption in); lane 30
+      # (fully in); end 89 (settled).
+      #
+      # `lane` is an overlay with a transparent ground, so it needs `--alpha`.
+      # Without it every transparent pixel is written as black, and the still
+      # reads as a black card with a lower-third on it — which is what the first
+      # run of this job produced.
+      - name: Render stills
+        run: |
+          cd video
+          raea render warrant.tsx --composition title --at 0,45,89 -o stills/title/
+          raea render warrant.tsx --composition blast --at 0,60,140,239 -o stills/blast/
+          raea render warrant.tsx --composition lane --at 30 --alpha -o stills/lane/
+          raea render warrant.tsx --composition end --at 89 -o stills/end/
+
+      # Text that is clipped, cramped or outside the safe area is the one defect
+      # a human reviewer reliably misses at 1920px. This is informational: it
+      # never fails the job, it just says what it sees.
+      - name: Check the text
+        continue-on-error: true
+        run: |
+          cd video
+          raea check warrant.tsx --quick -o stills/check.json
+
+      - name: Upload frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warrant-stills
+          path: video/stills/
+          if-no-files-found: warn
+          retention-days: 14
