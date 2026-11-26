@@ -1,0 +1,188 @@
+# Warrant — build notes for `forge deploy`
+#
+# Things this file assumes and must be checked when it changes:
+#   * runtime nodejs22.x exists (the CLI says if it does not; fall back nodejs20.x)
+#   * Teamwork Graph scopes are per object type (confirmed against
+#     /platform/teamwork-graph/scopes/, September 2026). A missing scope returns
+#     an empty result, not an error, so the briefing thins out silently.
+#   * `static/ui/vendor/bridge.js` is generated. Rebuild it with
+#     `npm run build:bridge` only when the @forge/bridge version changes.
+
+app:
+  id: ari:cloud:ecosystem::app/d06aafb5-91a9-446d-9bcd-39aa170b361e
+  runtime:
+    name: nodejs22.x
+  licensing:
+    enabled: false
+
+modules:
+  jira:issuePanel:
+    - key: warrant-issue-panel
+      resource: ui
+      resolver:
+        function: resolver
+      title: Warrant
+      icon: resource:icons;warrant.png
+  jira:globalPage:
+    - key: warrant-console
+      resource: ui
+      resolver:
+        function: resolver
+      title: Authority
+      icon: resource:icons;warrant.png
+
+  # The executable half: every write an agent can perform is one of these.
+  # Enforcement lives inside the handler, so a warrant cannot be bypassed by
+  # calling the tool differently.
+  action:
+    - key: request-warrant
+      name: Request a warrant
+      function: request-warrant-fn
+      actionVerb: CREATE
+      description: Ask a human for scoped permission to change Jira issues. Use before any write. Name the operation, issues (keys or a JQL query frozen into a list), why, how many actions and how long. Nothing happens until a human signs it.
+      inputs:
+        operation:
+          title: Operation
+          type: string
+          required: true
+          description: "One of jira.transition, jira.comment, jira.assign"
+        issueKeys:
+          title: Issue keys
+          type: string
+          required: false
+          description: "Comma-separated issue keys, e.g. PROJ-1,PROJ-2"
+        jql:
+          title: JQL query
+          type: string
+          required: false
+          description: "Query to resolve into a frozen issue list, e.g. project = PROJ AND
+            status = Stale"
+        reason:
+          title: Reason
+          type: string
+          required: true
+          description: "One sentence a human can judge, shown on the grant card"
+        maxActions:
+          title: Actions needed
+          type: integer
+          required: false
+          description: "Upper bound on writes this warrant authorises"
+        ttlMinutes:
+          title: Minutes valid
+          type: integer
+          required: false
+          description: "How long the authority should last"
+
+    - key: check-warrant
+      name: Check what I am allowed to do
+      function: check-warrant-fn
+      actionVerb: GET
+      description: Check whether a specific write is allowed before attempting it. Returns allowed, or the exact refusal reason and what a human needs to grant.
+      inputs:
+        operation:
+          title: Operation
+          type: string
+          required: true
+          description: "One of jira.transition, jira.comment, jira.assign"
+        issueKey:
+          title: Issue key
+          type: string
+          required: true
+          description: "The issue you want to change"
+
+    - key: perform-change
+      name: Perform a change under warrant
+      function: perform-change-fn
+      actionVerb: UPDATE
+      description: "Attempt a write. The only way to change an issue through this app: if no live warrant covers the operation and that exact issue, the change is refused and queued for a human."
+      inputs:
+        operation:
+          title: Operation
+          type: string
+          required: true
+          description: "One of jira.transition, jira.comment, jira.assign"
+        issueKey:
+          title: Issue key
+          type: string
+          required: true
+          description: "The issue to change"
+        value:
+          title: Value
+          type: string
+          required: true
+          description: "Target status name, comment text, or accountId to assign"
+
+    - key: list-warrants
+      name: List warrants
+      function: list-warrants-fn
+      actionVerb: GET
+      description: List the warrants on this site with their phase, remaining actions and expiry, so you can tell a human what authority you hold.
+      inputs: {}
+
+  # One agent, one job: it asks, it never assumes.
+  rovo:agent:
+    - key: steward
+      name: Steward
+      description: Requests scoped authority before changing work, and reports what it
+        was allowed to do.
+      icon: resource:icons;warrant.png
+      prompt: resource:prompt;steward.md
+      conversationStarters:
+        - What am I allowed to change right now?
+        - Request permission to close stale issues in my project
+        - Show me what I have been blocked from doing
+      actions:
+        - request-warrant
+        - check-warrant
+        - perform-change
+        - list-warrants
+
+  # The same tools, exposed to any MCP client. A warrant does not care which
+  # model is holding the keyboard.
+  rovo:mcp:
+    - key: warrant-mcp
+      name: Warrant
+      tools:
+        - request-warrant
+        - check-warrant
+        - perform-change
+        - list-warrants
+
+  function:
+    - key: resolver
+      handler: index.resolver
+    - key: request-warrant-fn
+      handler: index.requestWarrant
+    - key: check-warrant-fn
+      handler: index.checkWarrant
+    - key: perform-change-fn
+      handler: index.performChange
+    - key: list-warrants-fn
+      handler: index.listWarrants
+
+resources:
+  # One resource, two surfaces. `app.js` reads the Forge context and renders
+  # either the issue panel or the console, so the two can never drift apart.
+  - key: ui
+    path: static/ui
+  - key: icons
+    path: static/icons
+  - key: prompt
+    path: static/prompt
+
+permissions:
+  # Teamwork Graph is scoped per object type, and a scope is needed for every
+  # object type a field returns as well as the one it starts from. These three
+  # are exactly what the two curated queries touch:
+  #   jiraWorkItemLinkedExternalPullRequests → JiraWorkItem + ExternalPullRequest
+  #   jiraWorkItemGoals                      → JiraWorkItem + AtlassianGoal
+  # A missing scope does not error; it returns an empty result, so a thinner
+  # briefing is the symptom and this list is the cause.
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - storage:app
+    - read:graph:issue:jira
+    - read:graph:pull-request:external
+    - read:graph:goal:atlassian

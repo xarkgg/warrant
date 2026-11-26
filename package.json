@@ -1,0 +1,21 @@
+{
+  "name": "warrant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scoped, expiring authority for AI agents working in Jira",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "check": "node scripts/check.mjs",
+    "build:bridge": "node scripts/build-bridge.mjs",
+    "probe:ui": "node scripts/probe-ui.mjs"
+  },
+  "dependencies": {
+    "@forge/api": "^8.5.0",
+    "@forge/resolver": "^2.0.2"
+  },
+  "devDependencies": {
+    "@forge/bridge": "^7.3.0",
+    "esbuild": "^0.28.2"
+  }
+}
