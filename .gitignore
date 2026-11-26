@@ -1,0 +1,9 @@
+node_modules/
+.forge/
+*.log
+.env
+.env.*
+.DS_Store
+coverage/
+video/stills/
+video/out/
